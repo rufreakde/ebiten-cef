@@ -15,6 +15,7 @@
 package ebiten
 
 import (
+	stdcontext "context"
 	"errors"
 	"image"
 	"image/color"
@@ -387,6 +388,60 @@ func RunGameWithOptions(game Game, options *RunGameOptions) error {
 
 func isRunGameEnded() bool {
 	return isRunGameEnded_.Load()
+}
+
+// RunGameWithExternalPump is like RunGameWithOptions, except it never blocks
+// the calling goroutine on its own dedicated main-thread event loop.
+// Instead it returns immediately after creating the window (so call
+// SetWindowVisible(false) before this if the window should stay hidden —
+// e.g. when embedding Ebitengine's rendering into a host window owned by a
+// different windowing toolkit) with a pump function the caller must invoke
+// regularly — typically from the host toolkit's own main-thread timer — and
+// a stop function to shut the game down.
+//
+// This is the desktop counterpart to the internal RunGameWithoutMainLoop
+// used by the mobile bindings, exposed for embedders that need to
+// cooperatively share the real OS main thread with another framework's own
+// event loop (e.g. a CEF/Chromium OSR compositor driven by a native host
+// window) instead of Ebitengine owning it outright. Only available with the
+// GLFW desktop backend; returns an error otherwise (VM-guest and
+// framebuffer-device environments aren't supported).
+//
+// RunGameWithExternalPump must be called from the same OS thread the host
+// toolkit's own main loop runs on, with runtime.LockOSThread already in
+// effect for that goroutine.
+//
+// Don't call RunGame, RunGameWithOptions, or RunGameWithExternalPump twice
+// or more in one process.
+func RunGameWithExternalPump(game Game, options *RunGameOptions) (pump func(ctx stdcontext.Context) error, stop func(), err error) {
+	// Unlike RunGameWithOptions, isRunGameEnded_ must NOT be set as soon as
+	// this function returns — it returns immediately by design (that's the
+	// whole point), while the game keeps running via pump until stop is
+	// called. Setting it early made isRunGameEnded() (checked by, e.g.,
+	// NewImage) report the game as over while it was still very much
+	// running, panicking on the next frame. Wrap the real stop function
+	// instead, so the flag flips only when the caller actually stops.
+
+	op := toUIRunOptions(options)
+	ww, wh := WindowSize()
+	op.InitWindowWidthInDIP = ww
+	op.InitWindowHeightInDIP = wh
+	op.WindowPositionSet = windowPositionSetExplicitly.Load()
+
+	screenTransparent.Store(op.ScreenTransparent)
+	g := newGameForUI(game, op.ScreenTransparent)
+
+	rawPump, rawStop, err := ui.Get().RunWithExternalPump(g, op)
+	if err != nil {
+		isRunGameEnded_.Store(true)
+		return nil, nil, err
+	}
+
+	stop = func() {
+		rawStop()
+		isRunGameEnded_.Store(true)
+	}
+	return rawPump, stop, nil
 }
 
 // ScreenSizeInFullscreen returns the size in device-independent pixels when the game is fullscreen.

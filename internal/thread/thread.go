@@ -74,6 +74,39 @@ func (t *OSThread) NestedLoop(ctx context.Context) error {
 	return t.loop(ctx)
 }
 
+// RunPending drains and runs whatever calls are queued right now, then
+// returns immediately — it never blocks waiting for a call to arrive.
+//
+// This is an alternative to Loop for callers that need to cooperatively
+// share the OS thread with another framework's own event loop (e.g. an
+// embedder that owns the process's real main-thread run loop for its own
+// windowing/UI toolkit) instead of dedicating the thread to this OSThread
+// forever. The caller is responsible for invoking RunPending regularly
+// (e.g. from its own main-thread timer) so queued calls — which Call/
+// CallAsync block on delivering — don't stall indefinitely.
+//
+// RunPending must be called on the OS thread, with runtime.LockOSThread
+// already in effect for it (RunPending does not call LockOSThread itself,
+// unlike Loop, since the caller's own event loop owns that responsibility
+// when driving the thread cooperatively).
+func (t *OSThread) RunPending(ctx context.Context) error {
+	for {
+		select {
+		case item := <-t.funcs:
+			func() {
+				if item.done != nil {
+					defer close(item.done)
+				}
+				item.f()
+			}()
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			return nil
+		}
+	}
+}
+
 func (t *OSThread) loop(ctx context.Context) error {
 	for {
 		select {

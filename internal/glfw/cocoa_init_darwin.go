@@ -19,6 +19,41 @@ func cfString(s string) uintptr {
 	return cfStringCreateWithCString(0, s, kCFStringEncodingUTF8)
 }
 
+// SkipInitialRunLoop, when true, skips platformInit's brief bootstrap
+// [NSApp run] call (see the comment at its call site below).
+//
+// SkipAppDelegate, when true, skips platformInit's
+// nsApp.Send(setDelegate:, ...) call that installs GLFWApplicationDelegate
+// as NSApplication's delegate.
+//
+// Added together for ticket #20 (modwars): embedding Ebitengine (via
+// RunGameWithExternalPump, window kept hidden) into a host process that
+// already owns NSApplication for its own windowing toolkit — energye/lcl,
+// in that ticket's case. Root-caused via lldb + a Go-runtime crash trace:
+//
+//   - SkipInitialRunLoop alone (installing GLFW's delegate, but skipping
+//     its [NSApp run] bootstrap) still crashed, but differently: an
+//     NSException, "-[NSApplication lclSyncCheck:]: unrecognized selector
+//     sent to instance", thrown later during CEF's own [NSApp run]
+//     (app.RunMessageLoop()). lclSyncCheck: is energye/lcl's own category
+//     method on NSApplication, presumably dispatched through whatever
+//     delegate NSApp had *before* GLFW's setDelegate: call unconditionally
+//     replaced it with GLFWApplicationDelegate, which doesn't implement
+//     that selector.
+//   - SkipAppDelegate closes that gap: NSApp keeps whatever delegate LCL
+//     already installed via lcl.Application.Initialize(), instead of
+//     GLFW discarding it.
+//
+// Both are only safe to skip when a host embedder owns NSApplication and
+// its real run loop already (RunMultiThreadExternalPump's exact use case)
+// — GLFW's own delegate methods (menu bar setup, activation policy,
+// applicationShouldTerminate handling, etc.) never fire when skipped, so
+// this is not safe for a normal, GLFW-owns-the-window Ebitengine run.
+var (
+	SkipInitialRunLoop bool
+	SkipAppDelegate    bool
+)
+
 // createKeyTables builds the macOS virtual key code to GLFW key mapping tables.
 func createKeyTables() {
 	for i := range _glfw.platformWindow.keycodes {
@@ -526,10 +561,18 @@ func platformInit() error {
 	// Create the shared NSApplication instance.
 	nsApp := objc.ID(class_NSApplication).Send(sel_sharedApplication)
 
-	// Create and set the application delegate.
+	// Create and set the application delegate. See SkipAppDelegate's doc
+	// comment: skipping the actual setDelegate: call leaves NSApp's
+	// existing delegate (a host embedder's own, e.g. energye/lcl's) in
+	// place instead of GLFW unconditionally discarding it. The delegate
+	// instance is still created either way — GLFWWindowDelegate elsewhere
+	// still refers to it as origDelegate in some paths — only the
+	// NSApplication-level replacement is skipped.
 	_glfw.platformWindow.delegate = objc.ID(class_GLFWApplicationDelegate).Send(
 		objc.RegisterName("alloc")).Send(objc.RegisterName("init"))
-	nsApp.Send(objc.RegisterName("setDelegate:"), _glfw.platformWindow.delegate)
+	if !SkipAppDelegate {
+		nsApp.Send(objc.RegisterName("setDelegate:"), _glfw.platformWindow.delegate)
+	}
 
 	// Create GLFWHelper instance and register for keyboard input source change notifications.
 	_glfw.platformWindow.helper = objc.ID(class_GLFWHelper).Send(
@@ -593,9 +636,12 @@ func platformInit() error {
 	// Run the application to process initial events, but only if it hasn't
 	// already finished launching. The delegate's applicationDidFinishLaunching:
 	// calls stop: and posts an empty event, so this returns quickly.
-	currentApp := objc.ID(class_NSRunningApplication).Send(objc.RegisterName("currentApplication"))
-	if !objc.Send[bool](currentApp, objc.RegisterName("isFinishedLaunching")) {
-		nsApp.Send(sel_run)
+	// See SkipInitialRunLoop's doc comment for why this is skippable.
+	if !SkipInitialRunLoop {
+		currentApp := objc.ID(class_NSRunningApplication).Send(objc.RegisterName("currentApplication"))
+		if !objc.Send[bool](currentApp, objc.RegisterName("isFinishedLaunching")) {
+			nsApp.Send(sel_run)
+		}
 	}
 
 	// Initialize NSGL (OpenGL context support).

@@ -2032,6 +2032,99 @@ func (u *glfwBackend) runMultiThread(game Game, options *RunOptions) error {
 	return wg.Wait()
 }
 
+// RunMultiThreadExternalPump is like runMultiThread, except it never calls
+// mainThread.Loop itself — it never blocks the calling goroutine's OS
+// thread on an internal dedicated loop at all. Instead it returns a pump
+// function the caller is responsible for invoking regularly (e.g. from its
+// own main-thread timer), and a stop function to shut everything down.
+//
+// This exists for embedding Ebitengine into a host process that owns the
+// real OS main thread's event loop for its own windowing toolkit (e.g. an
+// embedder driving CEF's Chromium OSR compositor via a native Cocoa/Win32
+// event loop) — two frameworks can't each dedicate the one real OS main
+// thread to their own blocking loop. internal/thread.OSThread's Call/
+// CallAsync/RunPending machinery already exists exactly to let a queue of
+// main-thread-only work be serviced cooperatively instead of by a
+// dedicated blocking loop; this function is the minimal wiring to expose
+// that at the ebiten.RunGame level for desktop, mirroring what
+// RunGameWithoutMainLoop already does for android/ios.
+//
+// RunMultiThreadExternalPump must be called from the real OS main thread,
+// with runtime.LockOSThread already in effect for the calling goroutine —
+// initOnMainThread runs synchronously here, directly on the calling
+// goroutine, since no pump is running yet to service a Call round-trip.
+func (u *glfwBackend) RunMultiThreadExternalPump(game Game, options *RunOptions) (pump func(ctx stdcontext.Context) error, stop func(), err error) {
+	mt := thread.NewOSThread()
+	u.mainThread = mt
+	graphicscommand.SetOSThreadAsRenderThread()
+
+	u.context = newContext(game)
+
+	ctx, cancel := stdcontext.WithCancel(stdcontext.Background())
+
+	// RunMultiThreadExternalPump's entire purpose is embedding into a host
+	// that already owns (or will own) the real run loop — so
+	// platformInit's own brief bootstrap [NSApp run] (glfw.SkipInitialRunLoop's
+	// doc comment) is always redundant here, not just sometimes. See that
+	// doc comment for the crash this avoids.
+	glfw.SkipInitialRunLoop = true
+	glfw.SkipAppDelegate = true
+
+	if err := u.initOnMainThread(options); err != nil {
+		cancel()
+		return nil, nil, err
+	}
+
+	var wg errgroup.Group
+
+	// Run the render thread.
+	wg.Go(func() error {
+		defer cancel()
+		graphicscommand.LoopRenderThread(ctx)
+		return nil
+	})
+
+	// Run the game thread. Any main-thread-only work loopGame triggers
+	// (via mt.Call/CallAsync) queues on mt and is serviced whenever the
+	// caller invokes the returned pump function, not by a dedicated
+	// goroutine here.
+	wg.Go(func() error {
+		defer cancel()
+		defer u.setRunningBackend(nil)
+		return u.loopGame()
+	})
+
+	pump = func(pctx stdcontext.Context) error {
+		return mt.RunPending(pctx)
+	}
+	stop = func() {
+		cancel()
+
+		// The game/render goroutines may be mid mt.Call when cancel() runs
+		// — Call is a blocking, uncancellable channel send with no ctx
+		// awareness of its own — so they can be waiting on mt to be
+		// serviced one more time before they'll ever observe ctx.Done()
+		// and return. Once the caller stops invoking pump (which it will,
+		// right around when it calls stop), nothing else drains mt. Keep
+		// draining here ourselves until the goroutines actually finish, so
+		// stop can't hang waiting on a Call nobody will ever service.
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_ = wg.Wait()
+		}()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				_ = mt.RunPending(stdcontext.Background())
+			}
+		}
+	}
+	return pump, stop, nil
+}
+
 func (u *glfwBackend) runSingleThread(game Game, options *RunOptions) error {
 	// Initialize the main thread first so the thread is available at u.run (#809).
 	u.mainThread = thread.NewNoopThread()
