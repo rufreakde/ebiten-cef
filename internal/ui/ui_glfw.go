@@ -2052,11 +2052,6 @@ func (u *glfwBackend) RunMultiThreadEmbedded(game Game, options *RunOptions) (pu
 
 	ctx, cancel := stdcontext.WithCancel(stdcontext.Background())
 
-	// The host already owns the real run loop, so the platform layer
-	// should skip its own app-ownership setup. See PrepareForEmbedding's
-	// doc comment.
-	glfw.PrepareForEmbedding()
-
 	if err := u.initOnMainThread(options); err != nil {
 		cancel()
 		return nil, nil, err

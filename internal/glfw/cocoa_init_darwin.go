@@ -19,30 +19,6 @@ func cfString(s string) uintptr {
 	return cfStringCreateWithCString(0, s, kCFStringEncodingUTF8)
 }
 
-// PrepareForEmbedding tells the next platformInit call to skip setup
-// that assumes this package owns the whole app: creating its own
-// NSApplication delegate, and blocking on [NSApp run] at startup. Call
-// it once, before creating the window, when a host process already owns
-// NSApplication and its own run loop (RunMultiThreadEmbedded's case).
-//
-// Skipping only the [NSApp run] call isn't enough on its own: a host
-// with its own existing NSApplication delegate (e.g. energye/lcl) still
-// crashes later, because GLFW's setDelegate: call already replaced that
-// delegate with its own. Skipping both together fixes it.
-//
-// Don't call this for a normal run where GLFW owns the window — it
-// skips real setup (menu bar, activation policy, termination handling)
-// that a GLFW-owned app needs.
-func PrepareForEmbedding() {
-	skipInitialRunLoop = true
-	skipAppDelegate = true
-}
-
-var (
-	skipInitialRunLoop bool
-	skipAppDelegate    bool
-)
-
 // createKeyTables builds the macOS virtual key code to GLFW key mapping tables.
 func createKeyTables() {
 	for i := range _glfw.platformWindow.keycodes {
@@ -550,18 +526,10 @@ func platformInit() error {
 	// Create the shared NSApplication instance.
 	nsApp := objc.ID(class_NSApplication).Send(sel_sharedApplication)
 
-	// Create and set the application delegate. See PrepareForEmbedding's
-	// doc comment: skipping the actual setDelegate: call leaves NSApp's
-	// existing delegate (a host embedder's own, e.g. energye/lcl's) in
-	// place instead of GLFW unconditionally discarding it. The delegate
-	// instance is still created either way — GLFWWindowDelegate elsewhere
-	// still refers to it as origDelegate in some paths — only the
-	// NSApplication-level replacement is skipped.
 	_glfw.platformWindow.delegate = objc.ID(class_GLFWApplicationDelegate).Send(
 		objc.RegisterName("alloc")).Send(objc.RegisterName("init"))
-	if !skipAppDelegate {
-		nsApp.Send(objc.RegisterName("setDelegate:"), _glfw.platformWindow.delegate)
-	}
+
+	nsApp.Send(objc.RegisterName("setDelegate:"), _glfw.platformWindow.delegate)
 
 	// Create GLFWHelper instance and register for keyboard input source change notifications.
 	_glfw.platformWindow.helper = objc.ID(class_GLFWHelper).Send(
@@ -625,12 +593,9 @@ func platformInit() error {
 	// Run the application to process initial events, but only if it hasn't
 	// already finished launching. The delegate's applicationDidFinishLaunching:
 	// calls stop: and posts an empty event, so this returns quickly.
-	// See PrepareForEmbedding's doc comment for why this is skippable.
-	if !skipInitialRunLoop {
-		currentApp := objc.ID(class_NSRunningApplication).Send(objc.RegisterName("currentApplication"))
-		if !objc.Send[bool](currentApp, objc.RegisterName("isFinishedLaunching")) {
-			nsApp.Send(sel_run)
-		}
+	currentApp := objc.ID(class_NSRunningApplication).Send(objc.RegisterName("currentApplication"))
+	if !objc.Send[bool](currentApp, objc.RegisterName("isFinishedLaunching")) {
+		nsApp.Send(sel_run)
 	}
 
 	// Initialize NSGL (OpenGL context support).
