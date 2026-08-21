@@ -526,9 +526,9 @@ func platformInit() error {
 	// Create the shared NSApplication instance.
 	nsApp := objc.ID(class_NSApplication).Send(sel_sharedApplication)
 
+	// Create and set the application delegate.
 	_glfw.platformWindow.delegate = objc.ID(class_GLFWApplicationDelegate).Send(
 		objc.RegisterName("alloc")).Send(objc.RegisterName("init"))
-
 	nsApp.Send(objc.RegisterName("setDelegate:"), _glfw.platformWindow.delegate)
 
 	// Create GLFWHelper instance and register for keyboard input source change notifications.
