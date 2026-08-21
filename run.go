@@ -382,11 +382,10 @@ func isRunGameEnded() bool {
 	return isRunGameEnded_.Load()
 }
 
-// prepareUIRun converts a RunGameOptions into the internal ui.RunOptions
-// and gameForUI a Run* variant hands to the ui package, filling in the
-// window size/position defaults every variant needs. Shared by
-// RunGameWithOptions and RunGameEmbedded, which otherwise duplicated
-// this setup exactly.
+// prepareUIRun builds the ui.RunOptions and gameForUI that every Run*
+// variant hands to the ui package, filling in window size/position
+// defaults. Shared by RunGameWithOptions and RunGameEmbedded to avoid
+// duplicating this setup.
 func prepareUIRun(game Game, options *RunGameOptions) (*ui.RunOptions, *gameForUI) {
 	op := toUIRunOptions(options)
 	ww, wh := WindowSize()
@@ -425,12 +424,11 @@ func prepareUIRun(game Game, options *RunGameOptions) (*ui.RunOptions, *gameForU
 // Experimental: this API may change in a future version.
 func RunGameEmbedded(game Game, options *RunGameOptions) (pump func(ctx stdcontext.Context) error, stop func(), err error) {
 	// Unlike RunGameWithOptions, isRunGameEnded_ must NOT be set as soon as
-	// this function returns — it returns immediately by design (that's the
-	// whole point), while the game keeps running via pump until stop is
-	// called. Setting it early made isRunGameEnded() (checked by, e.g.,
-	// NewImage) report the game as over while it was still very much
-	// running, panicking on the next frame. Wrap the real stop function
-	// instead, so the flag flips only when the caller actually stops.
+	// this returns — it returns immediately by design, while the game
+	// keeps running via pump until stop is called. Setting it early made
+	// isRunGameEnded() (checked by e.g. NewImage) report the game as over
+	// while still running, panicking on the next frame. Wrap stop instead,
+	// so the flag flips only when the caller actually stops.
 
 	op, g := prepareUIRun(game, options)
 

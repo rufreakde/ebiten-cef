@@ -2083,13 +2083,12 @@ func (u *glfwBackend) RunMultiThreadEmbedded(game Game, options *RunOptions) (pu
 		cancel()
 
 		// The game/render goroutines may be mid mt.Call when cancel() runs
-		// — Call is a blocking, uncancellable channel send with no ctx
-		// awareness of its own — so they can be waiting on mt to be
-		// serviced one more time before they'll ever observe ctx.Done()
-		// and return. Once the caller stops invoking pump (which it will,
-		// right around when it calls stop), nothing else drains mt. Keep
-		// draining here ourselves until the goroutines actually finish, so
-		// stop can't hang waiting on a Call nobody will ever service.
+		// — Call blocks on an uncancellable channel send, so they may be
+		// waiting on mt to be serviced once more before they see
+		// ctx.Done() and return. Nothing else drains mt once the caller
+		// stops calling pump, so keep draining here until the goroutines
+		// actually finish — otherwise stop could hang waiting on a Call
+		// nobody will ever service.
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
