@@ -366,15 +366,7 @@ type RunGameOptions struct {
 func RunGameWithOptions(game Game, options *RunGameOptions) error {
 	defer isRunGameEnded_.Store(true)
 
-	op := toUIRunOptions(options)
-	ww, wh := WindowSize()
-	op.InitWindowWidthInDIP = ww
-	op.InitWindowHeightInDIP = wh
-	op.WindowPositionSet = windowPositionSetExplicitly.Load()
-
-	// This is necessary to change the result of IsScreenTransparent.
-	screenTransparent.Store(op.ScreenTransparent)
-	g := newGameForUI(game, op.ScreenTransparent)
+	op, g := prepareUIRun(game, options)
 
 	if err := ui.Get().Run(g, op); err != nil {
 		if errors.Is(err, Termination) {
@@ -388,6 +380,25 @@ func RunGameWithOptions(game Game, options *RunGameOptions) error {
 
 func isRunGameEnded() bool {
 	return isRunGameEnded_.Load()
+}
+
+// prepareUIRun converts a RunGameOptions into the internal ui.RunOptions
+// and gameForUI a Run* variant hands to the ui package, filling in the
+// window size/position defaults every variant needs. Shared by
+// RunGameWithOptions and RunGameEmbedded, which otherwise duplicated
+// this setup exactly.
+func prepareUIRun(game Game, options *RunGameOptions) (*ui.RunOptions, *gameForUI) {
+	op := toUIRunOptions(options)
+	ww, wh := WindowSize()
+	op.InitWindowWidthInDIP = ww
+	op.InitWindowHeightInDIP = wh
+	op.WindowPositionSet = windowPositionSetExplicitly.Load()
+
+	// This is necessary to change the result of IsScreenTransparent.
+	screenTransparent.Store(op.ScreenTransparent)
+	g := newGameForUI(game, op.ScreenTransparent)
+
+	return op, g
 }
 
 // RunGameEmbedded runs the game inside a window your own app already
@@ -421,14 +432,7 @@ func RunGameEmbedded(game Game, options *RunGameOptions) (pump func(ctx stdconte
 	// running, panicking on the next frame. Wrap the real stop function
 	// instead, so the flag flips only when the caller actually stops.
 
-	op := toUIRunOptions(options)
-	ww, wh := WindowSize()
-	op.InitWindowWidthInDIP = ww
-	op.InitWindowHeightInDIP = wh
-	op.WindowPositionSet = windowPositionSetExplicitly.Load()
-
-	screenTransparent.Store(op.ScreenTransparent)
-	g := newGameForUI(game, op.ScreenTransparent)
+	op, g := prepareUIRun(game, options)
 
 	rawPump, rawStop, err := ui.Get().RunEmbedded(g, op)
 	if err != nil {
