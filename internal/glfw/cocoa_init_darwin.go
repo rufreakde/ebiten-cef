@@ -19,34 +19,20 @@ func cfString(s string) uintptr {
 	return cfStringCreateWithCString(0, s, kCFStringEncodingUTF8)
 }
 
-// PrepareForEmbedding tells the next platformInit call to skip the two
-// setup steps that only make sense when this package owns the whole app
-// — for a caller (like RunMultiThreadEmbedded) that's embedding into a
-// host process that already owns NSApplication and its main loop itself.
-// Call it once, before the window is created.
+// PrepareForEmbedding tells the next platformInit call to skip setup
+// that assumes this package owns the whole app: creating its own
+// NSApplication delegate, and blocking on [NSApp run] at startup. Call
+// it once, before creating the window, when a host process already owns
+// NSApplication and its own run loop (RunMultiThreadEmbedded's case).
 //
-// Added for ticket #20 (modwars): embedding Ebitengine (window kept
-// hidden) into a host process that already owns NSApplication for its
-// own windowing toolkit — energye/lcl, in that ticket's case. Root-caused
-// via lldb + a Go-runtime crash trace:
+// Skipping only the [NSApp run] call isn't enough on its own: a host
+// with its own existing NSApplication delegate (e.g. energye/lcl) still
+// crashes later, because GLFW's setDelegate: call already replaced that
+// delegate with its own. Skipping both together fixes it.
 //
-//   - Skipping just the [NSApp run] bootstrap (below) still crashed, but
-//     differently: an NSException, "-[NSApplication lclSyncCheck:]:
-//     unrecognized selector sent to instance", thrown later during CEF's
-//     own [NSApp run] (app.RunMessageLoop()). lclSyncCheck: is
-//     energye/lcl's own category method on NSApplication, presumably
-//     dispatched through whatever delegate NSApp had *before* GLFW's
-//     setDelegate: call unconditionally replaced it with
-//     GLFWApplicationDelegate, which doesn't implement that selector.
-//   - Also skipping the setDelegate: call closes that gap: NSApp keeps
-//     whatever delegate LCL already installed via
-//     lcl.Application.Initialize(), instead of GLFW discarding it.
-//
-// Only safe to call when a host embedder owns NSApplication and its real
-// run loop already — GLFW's own delegate methods (menu bar setup,
-// activation policy, applicationShouldTerminate handling, etc.) never
-// fire once skipped, so this is not safe for a normal, GLFW-owns-the-
-// window Ebitengine run.
+// Don't call this for a normal run where GLFW owns the window — it
+// skips real setup (menu bar, activation policy, termination handling)
+// that a GLFW-owned app needs.
 func PrepareForEmbedding() {
 	skipInitialRunLoop = true
 	skipAppDelegate = true

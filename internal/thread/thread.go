@@ -75,20 +75,13 @@ func (t *OSThread) NestedLoop(ctx context.Context) error {
 }
 
 // LoopNonBlocking runs whatever calls are queued right now, then returns
-// immediately — unlike Loop, it never waits for a call to arrive.
+// immediately — unlike Loop, it never waits for a call to arrive. Use it
+// when another event loop (e.g. a host app's own) needs to share the OS
+// thread instead of Loop dedicating it forever; call it regularly from
+// that loop so queued Call/CallAsync requests don't stall.
 //
-// This is an alternative to Loop for callers that need to cooperatively
-// share the OS thread with another framework's own event loop (e.g. an
-// embedder that owns the process's real main-thread run loop for its own
-// windowing/UI toolkit) instead of dedicating the thread to this OSThread
-// forever. The caller is responsible for invoking LoopNonBlocking
-// regularly (e.g. from its own main-thread timer) so queued calls — which
-// Call/CallAsync block on delivering — don't stall indefinitely.
-//
-// LoopNonBlocking must be called on the OS thread, with
-// runtime.LockOSThread already in effect for it (LoopNonBlocking does not
-// call LockOSThread itself, unlike Loop, since the caller's own event
-// loop owns that responsibility when driving the thread cooperatively).
+// Must be called on the OS thread, with runtime.LockOSThread already in
+// effect — unlike Loop, it doesn't call LockOSThread itself.
 func (t *OSThread) LoopNonBlocking(ctx context.Context) error {
 	for {
 		select {

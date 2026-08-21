@@ -2032,27 +2032,17 @@ func (u *glfwBackend) runMultiThread(game Game, options *RunOptions) error {
 	return wg.Wait()
 }
 
-// RunMultiThreadEmbedded is like runMultiThread, except it never calls
-// mainThread.Loop itself — it never blocks the calling goroutine's OS
-// thread on an internal dedicated loop at all. Instead it returns a pump
-// function the caller is responsible for invoking regularly (e.g. from its
-// own main-thread timer), and a stop function to shut everything down.
+// RunMultiThreadEmbedded is like runMultiThread, but it never blocks the
+// calling goroutine on its own loop. Instead it returns a pump function
+// to call regularly (e.g. from a host toolkit's own main-thread timer),
+// and a stop function to shut everything down. It reuses
+// internal/thread.OSThread's existing Call/CallAsync/LoopNonBlocking
+// machinery — this is just the wiring to expose that as a RunGame-level
+// API on desktop, matching what RunGameWithoutMainLoop already does for
+// android/ios.
 //
-// This exists for embedding Ebitengine into a host process that owns the
-// real OS main thread's event loop for its own windowing toolkit (e.g. an
-// embedder driving CEF's Chromium OSR compositor via a native Cocoa/Win32
-// event loop) — two frameworks can't each dedicate the one real OS main
-// thread to their own blocking loop. internal/thread.OSThread's Call/
-// CallAsync/LoopNonBlocking machinery already exists exactly to let a
-// queue of main-thread-only work be serviced cooperatively instead of by
-// a dedicated blocking loop; this function is the minimal wiring to
-// expose that at the ebiten.RunGame level for desktop, mirroring what
-// RunGameWithoutMainLoop already does for android/ios.
-//
-// RunMultiThreadEmbedded must be called from the real OS main thread,
-// with runtime.LockOSThread already in effect for the calling goroutine —
-// initOnMainThread runs synchronously here, directly on the calling
-// goroutine, since no pump is running yet to service a Call round-trip.
+// Must be called from the real OS main thread, with runtime.LockOSThread
+// already in effect for the calling goroutine.
 func (u *glfwBackend) RunMultiThreadEmbedded(game Game, options *RunOptions) (pump func(ctx stdcontext.Context) error, stop func(), err error) {
 	mt := thread.NewOSThread()
 	u.mainThread = mt
@@ -2062,11 +2052,9 @@ func (u *glfwBackend) RunMultiThreadEmbedded(game Game, options *RunOptions) (pu
 
 	ctx, cancel := stdcontext.WithCancel(stdcontext.Background())
 
-	// RunMultiThreadEmbedded's entire purpose is embedding into a host
-	// that already owns (or will own) the real run loop — so telling the
-	// platform layer to skip its own app-ownership setup (see
-	// glfw.PrepareForEmbedding's doc comment) is always correct here, not
-	// just sometimes.
+	// The host already owns the real run loop, so the platform layer
+	// should skip its own app-ownership setup. See PrepareForEmbedding's
+	// doc comment.
 	glfw.PrepareForEmbedding()
 
 	if err := u.initOnMainThread(options); err != nil {
