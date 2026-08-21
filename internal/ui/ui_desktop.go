@@ -146,21 +146,21 @@ func (u *UserInterface) Run(game Game, options *RunOptions) error {
 	return fb.run(game, options)
 }
 
-// RunWithExternalPump is the GLFW-backend-only counterpart to Run: instead
-// of blocking the calling goroutine's OS thread on its own dedicated event
+// RunEmbedded is the GLFW-backend-only counterpart to Run: instead of
+// blocking the calling goroutine's OS thread on its own dedicated event
 // loop, it returns a pump function the caller must invoke regularly (e.g.
 // from its own main-thread timer) and a stop function. See
-// glfwBackend.RunMultiThreadExternalPump's doc comment for why this exists.
+// glfwBackend.RunMultiThreadEmbedded's doc comment for why this exists.
 //
-// RunWithExternalPump returns an error if the GLFW backend isn't available
-// on this platform (VM-guest and framebuffer-device fallbacks don't support
-// external pumping — they're not the target of this API).
-func (u *UserInterface) RunWithExternalPump(game Game, options *RunOptions) (pump func(ctx stdcontext.Context) error, stop func(), err error) {
+// RunEmbedded returns an error if the GLFW backend isn't available on
+// this platform (VM-guest and framebuffer-device fallbacks aren't the
+// target of this API).
+func (u *UserInterface) RunEmbedded(game Game, options *RunOptions) (pump func(ctx stdcontext.Context) error, stop func(), err error) {
 	b := maybeNewGLFWBackend(u)
 	if b == nil {
-		return nil, nil, fmt.Errorf("ui: RunWithExternalPump requires the GLFW backend, which is unavailable in this environment")
+		return nil, nil, fmt.Errorf("ui: RunEmbedded requires the GLFW backend, which is unavailable in this environment")
 	}
-	return b.RunMultiThreadExternalPump(game, options)
+	return b.RunMultiThreadEmbedded(game, options)
 }
 
 // maybeNewVMGuestBackend returns a remote (guest) backend when a host endpoint is configured, or nil

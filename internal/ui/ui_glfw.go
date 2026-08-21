@@ -2032,7 +2032,7 @@ func (u *glfwBackend) runMultiThread(game Game, options *RunOptions) error {
 	return wg.Wait()
 }
 
-// RunMultiThreadExternalPump is like runMultiThread, except it never calls
+// RunMultiThreadEmbedded is like runMultiThread, except it never calls
 // mainThread.Loop itself — it never blocks the calling goroutine's OS
 // thread on an internal dedicated loop at all. Instead it returns a pump
 // function the caller is responsible for invoking regularly (e.g. from its
@@ -2043,17 +2043,17 @@ func (u *glfwBackend) runMultiThread(game Game, options *RunOptions) error {
 // embedder driving CEF's Chromium OSR compositor via a native Cocoa/Win32
 // event loop) — two frameworks can't each dedicate the one real OS main
 // thread to their own blocking loop. internal/thread.OSThread's Call/
-// CallAsync/RunPending machinery already exists exactly to let a queue of
-// main-thread-only work be serviced cooperatively instead of by a
-// dedicated blocking loop; this function is the minimal wiring to expose
-// that at the ebiten.RunGame level for desktop, mirroring what
+// CallAsync/LoopNonBlocking machinery already exists exactly to let a
+// queue of main-thread-only work be serviced cooperatively instead of by
+// a dedicated blocking loop; this function is the minimal wiring to
+// expose that at the ebiten.RunGame level for desktop, mirroring what
 // RunGameWithoutMainLoop already does for android/ios.
 //
-// RunMultiThreadExternalPump must be called from the real OS main thread,
+// RunMultiThreadEmbedded must be called from the real OS main thread,
 // with runtime.LockOSThread already in effect for the calling goroutine —
 // initOnMainThread runs synchronously here, directly on the calling
 // goroutine, since no pump is running yet to service a Call round-trip.
-func (u *glfwBackend) RunMultiThreadExternalPump(game Game, options *RunOptions) (pump func(ctx stdcontext.Context) error, stop func(), err error) {
+func (u *glfwBackend) RunMultiThreadEmbedded(game Game, options *RunOptions) (pump func(ctx stdcontext.Context) error, stop func(), err error) {
 	mt := thread.NewOSThread()
 	u.mainThread = mt
 	graphicscommand.SetOSThreadAsRenderThread()
@@ -2062,13 +2062,12 @@ func (u *glfwBackend) RunMultiThreadExternalPump(game Game, options *RunOptions)
 
 	ctx, cancel := stdcontext.WithCancel(stdcontext.Background())
 
-	// RunMultiThreadExternalPump's entire purpose is embedding into a host
-	// that already owns (or will own) the real run loop — so
-	// platformInit's own brief bootstrap [NSApp run] (glfw.SkipInitialRunLoop's
-	// doc comment) is always redundant here, not just sometimes. See that
-	// doc comment for the crash this avoids.
-	glfw.SkipInitialRunLoop = true
-	glfw.SkipAppDelegate = true
+	// RunMultiThreadEmbedded's entire purpose is embedding into a host
+	// that already owns (or will own) the real run loop — so telling the
+	// platform layer to skip its own app-ownership setup (see
+	// glfw.PrepareForEmbedding's doc comment) is always correct here, not
+	// just sometimes.
+	glfw.PrepareForEmbedding()
 
 	if err := u.initOnMainThread(options); err != nil {
 		cancel()
@@ -2095,7 +2094,7 @@ func (u *glfwBackend) RunMultiThreadExternalPump(game Game, options *RunOptions)
 	})
 
 	pump = func(pctx stdcontext.Context) error {
-		return mt.RunPending(pctx)
+		return mt.LoopNonBlocking(pctx)
 	}
 	stop = func() {
 		cancel()
@@ -2118,7 +2117,7 @@ func (u *glfwBackend) RunMultiThreadExternalPump(game Game, options *RunOptions)
 			case <-done:
 				return
 			default:
-				_ = mt.RunPending(stdcontext.Background())
+				_ = mt.LoopNonBlocking(stdcontext.Background())
 			}
 		}
 	}

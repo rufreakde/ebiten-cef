@@ -288,6 +288,14 @@ func initRemoteSession() error {
 	return nil
 }
 
+// PrepareForEmbedding is the darwin-only PrepareForEmbedding's Windows
+// counterpart. Windows' platformInit has no equivalent single-app-
+// ownership step to skip (unlike macOS's NSApplication singleton), so
+// this does nothing — kept so callers that build for both platforms
+// (like RunGameEmbedded) don't need a platform check of their own.
+func PrepareForEmbedding() {
+}
+
 func platformInit() error {
 	// Changing the foreground lock timeout was removed from the original code.
 	// See https://github.com/glfw/glfw/commit/58b48a3a00d9c2a5ca10cc23069a71d8773cc7a4

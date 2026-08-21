@@ -390,30 +390,29 @@ func isRunGameEnded() bool {
 	return isRunGameEnded_.Load()
 }
 
-// RunGameWithExternalPump is like RunGameWithOptions, except it never blocks
-// the calling goroutine on its own dedicated main-thread event loop.
-// Instead it returns immediately after creating the window (so call
-// SetWindowVisible(false) before this if the window should stay hidden —
-// e.g. when embedding Ebitengine's rendering into a host window owned by a
-// different windowing toolkit) with a pump function the caller must invoke
-// regularly — typically from the host toolkit's own main-thread timer — and
-// a stop function to shut the game down.
+// RunGameEmbedded runs the game inside a window your own app already
+// owns, instead of Ebitengine creating and running its own window. Use
+// this when another framework (e.g. a CEF/Chromium OSR compositor driven
+// by a native host window) needs to own the process's real main thread,
+// and Ebitengine needs to share it cooperatively instead of taking it
+// over. If the window should stay hidden, call SetWindowVisible(false)
+// before calling RunGameEmbedded.
 //
-// This is the desktop counterpart to the internal RunGameWithoutMainLoop
-// used by the mobile bindings, exposed for embedders that need to
-// cooperatively share the real OS main thread with another framework's own
-// event loop (e.g. a CEF/Chromium OSR compositor driven by a native host
-// window) instead of Ebitengine owning it outright. Only available with the
-// GLFW desktop backend; returns an error otherwise (VM-guest and
-// framebuffer-device environments aren't supported).
+// It does not block. It sets up the window and hands back two functions:
+//   - pump: call this often (e.g. once per frame) to let the game update
+//     and draw.
+//   - stop: call this once, when you're done, to shut the game down.
 //
-// RunGameWithExternalPump must be called from the same OS thread the host
-// toolkit's own main loop runs on, with runtime.LockOSThread already in
-// effect for that goroutine.
+// You must call RunGameEmbedded on the same OS thread your app's own
+// main loop runs on, with runtime.LockOSThread already in effect for it.
+// Only works with the GLFW desktop backend; returns an error otherwise
+// (VM-guest and framebuffer-device environments aren't supported).
 //
-// Don't call RunGame, RunGameWithOptions, or RunGameWithExternalPump twice
-// or more in one process.
-func RunGameWithExternalPump(game Game, options *RunGameOptions) (pump func(ctx stdcontext.Context) error, stop func(), err error) {
+// Only call one of RunGame, RunGameWithOptions, or RunGameEmbedded, and
+// only once per program.
+//
+// Experimental: this API may change in a future version.
+func RunGameEmbedded(game Game, options *RunGameOptions) (pump func(ctx stdcontext.Context) error, stop func(), err error) {
 	// Unlike RunGameWithOptions, isRunGameEnded_ must NOT be set as soon as
 	// this function returns — it returns immediately by design (that's the
 	// whole point), while the game keeps running via pump until stop is
@@ -431,7 +430,7 @@ func RunGameWithExternalPump(game Game, options *RunGameOptions) (pump func(ctx 
 	screenTransparent.Store(op.ScreenTransparent)
 	g := newGameForUI(game, op.ScreenTransparent)
 
-	rawPump, rawStop, err := ui.Get().RunWithExternalPump(g, op)
+	rawPump, rawStop, err := ui.Get().RunEmbedded(g, op)
 	if err != nil {
 		isRunGameEnded_.Store(true)
 		return nil, nil, err

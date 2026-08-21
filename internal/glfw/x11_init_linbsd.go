@@ -1028,6 +1028,14 @@ func createCursorX11(image *Image, xhot, yhot int) _XID {
 	return cursor
 }
 
+// PrepareForEmbedding is the darwin-only PrepareForEmbedding's X11
+// counterpart. X11's platformInit has no equivalent single-app-ownership
+// step to skip (unlike macOS's NSApplication singleton), so this does
+// nothing — kept so callers that build for both platforms (like
+// RunGameEmbedded) don't need a platform check of their own.
+func PrepareForEmbedding() {
+}
+
 func platformInit() error {
 	if err := initLibX11(); err != nil {
 		return err
