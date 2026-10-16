@@ -1707,6 +1707,7 @@ func (u *glfwBackend) readInputState(inputState *InputState) {
 	u.m.Lock()
 	defer u.m.Unlock()
 	u.inputState.copyAndReset(inputState)
+	u.beginTickInput()
 }
 
 func (u *glfwBackend) Window() backendWindow {

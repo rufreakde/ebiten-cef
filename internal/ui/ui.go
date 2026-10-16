@@ -289,7 +289,36 @@ func (u *UserInterface) Tick() int64 {
 
 func (u *UserInterface) incrementTick() {
 	u.tick.Add(1)
-	u.inputTime.Store(int64(NewInputTimeFromTick(u.tick.Load())))
+	u.raiseInputTime(NewInputTimeFromTick(u.tick.Load()))
+}
+
+// beginTickInput marks the running tick's input as read: every input event
+// from now on is stamped with the next tick.
+//
+// With the usual loop, GLFW delivers events only while the game goroutine
+// waits in PollEvents, so no event arrives during an Update. Under
+// RunGameEmbedded the host's own event pump (for example CEF's message loop)
+// runs on the main thread at any time and can deliver a key while an Update
+// runs. Stamped with the running tick, whose input was already read, such a
+// press was never just pressed in any Update.
+//
+// It must be called with the lock the input callbacks take held, right after
+// the input state is read, so an event is either read by this tick or stamped
+// for the next one.
+func (u *UserInterface) beginTickInput() {
+	u.raiseInputTime(NewInputTimeFromTick(u.tick.Load() + 1))
+}
+
+// raiseInputTime moves the next input stamp up to floor, never down: a stamp
+// is never handed out twice, or a release equal to its press would be
+// dropped as a duplicate (#3326).
+func (u *UserInterface) raiseInputTime(floor InputTime) {
+	for {
+		current := u.inputTime.Load()
+		if current >= int64(floor) || u.inputTime.CompareAndSwap(current, int64(floor)) {
+			return
+		}
+	}
 }
 
 func (u *UserInterface) InputTime() InputTime {
