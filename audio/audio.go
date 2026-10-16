@@ -72,6 +72,10 @@ type Context struct {
 
 	m         sync.Mutex
 	semaphore chan struct{}
+
+	// deviceErrorHandler and silenced: see SetDeviceErrorHandler (fork).
+	deviceErrorHandler func(err error)
+	silenced           bool
 }
 
 var (
@@ -125,6 +129,10 @@ func NewContext(sampleRate int) *Context {
 	})
 
 	h.AppendHookOnBeforeUpdateWithVMGuestInfo(func(vmGuest bool) error {
+		if c.isSilenced() {
+			return nil
+		}
+
 		var err error
 		theContextLock.Lock()
 		if theContext != nil {
@@ -132,6 +140,9 @@ func NewContext(sampleRate int) *Context {
 		}
 		theContextLock.Unlock()
 		if err != nil {
+			if c.silence(err) {
+				return nil
+			}
 			return err
 		}
 
@@ -142,6 +153,9 @@ func NewContext(sampleRate int) *Context {
 		// program waits for IsReady() to be true.
 		ready, err := c.playerFactory.initContextIfNeeded(vmGuest)
 		if err != nil {
+			if c.silence(err) {
+				return nil
+			}
 			return err
 		}
 		if ready != nil {
@@ -175,6 +189,45 @@ func CurrentContext() *Context {
 	c := theContext
 	theContextLock.Unlock()
 	return c
+}
+
+// SetDeviceErrorHandler makes an audio error non-fatal (fork addition, not
+// upstream). By default an audio error, for example a machine without a
+// usable sound device, is returned from the game's update and ends the game.
+// With a handler set, the first such error goes to f instead, once, and the
+// context stays silent from then on: players can still be made and driven,
+// but nothing reaches a device and the game keeps running.
+//
+// f is called from the game's update goroutine. Set it right after
+// NewContext, before the next update.
+func (c *Context) SetDeviceErrorHandler(f func(err error)) {
+	c.m.Lock()
+	c.deviceErrorHandler = f
+	c.m.Unlock()
+}
+
+// silence hands err to the device error handler, the first time only, and
+// reports whether a handler took it.
+func (c *Context) silence(err error) bool {
+	c.m.Lock()
+	f, first := c.deviceErrorHandler, !c.silenced
+	if f != nil {
+		c.silenced = true
+	}
+	c.m.Unlock()
+	if f == nil {
+		return false
+	}
+	if first {
+		f(err)
+	}
+	return true
+}
+
+func (c *Context) isSilenced() bool {
+	c.m.Lock()
+	defer c.m.Unlock()
+	return c.silenced
 }
 
 func (c *Context) setError(err error) {

@@ -54,7 +54,15 @@ func (c *dummyContext) Resume() error {
 }
 
 func (c *dummyContext) Err() error {
-	return nil
+	return dummyDeviceErr
+}
+
+// dummyDeviceErr is what the dummy device reports from Err, to stand in for
+// a sound device that failed to open.
+var dummyDeviceErr error
+
+func SetDeviceErrForTesting(err error) {
+	dummyDeviceErr = err
 }
 
 func (p *dummyPlayer) Pause() {
@@ -159,6 +167,12 @@ func (h *dummyHook) AppendHookOnBeforeUpdateWithVMGuestInfo(f func(vmGuest bool)
 
 func init() {
 	hookerForTesting = &dummyHook{}
+}
+
+// ResetHooksForTesting drops the update hooks of the contexts that earlier
+// tests made, so UpdateForTesting runs only the next context's hook.
+func ResetHooksForTesting() {
+	hookerForTesting.(*dummyHook).updates = nil
 }
 
 func UpdateForTesting() error {
